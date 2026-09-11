@@ -24,14 +24,38 @@ from app.schemas import (
     ContainmentResponse,
     DashboardSummaryResponse
 )
+from app.config import settings
 from app.engines import IOCEngine, RiskEngine, FingerprintEngine, MitreEngine, AIEngine
 from app.websocket import ws_manager
 
 router = APIRouter()
 
-# Helper for current UTC string
+# Sessions/events that are NOT real honeypot attacker traffic
+_DEMO_SESSION_PREFIXES = ("ATK-SIM-", "ATK-SSH-901", "ATK-WEB-402", "sim-")
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _is_simulation_event(event_dict: dict) -> bool:
+    meta = event_dict.get("metadata") or {}
+    if meta.get("simulation") is True:
+        return True
+    sid = event_dict.get("session_id") or ""
+    return any(sid.startswith(p) for p in _DEMO_SESSION_PREFIXES)
+
+
+def _real_session_query(extra: dict | None = None) -> dict:
+    """MongoDB filter: exclude demo/simulation sessions from production dashboard."""
+    q = {
+        "session_id": {
+            "$not": {"$regex": r"^(ATK-SIM-|ATK-SSH-901|ATK-WEB-402|sim-|SYSTEM-)"}
+        }
+    }
+    if extra:
+        q.update(extra)
+    return q
 
 
 # -------------------------------------------------------------------------
@@ -53,6 +77,13 @@ async def ingest_event(payload: EventCreate):
     if not event_dict.get("timestamp"):
         event_dict["timestamp"] = now_iso()
     event_dict["processed_at"] = now_iso()
+
+    # Reject fake dashboard simulation unless explicitly enabled (production = real honeypot only)
+    if _is_simulation_event(event_dict) and not settings.ALLOW_SIMULATION_EVENTS:
+        raise HTTPException(
+            status_code=403,
+            detail="Simulation events disabled. Only real honeypot telemetry is accepted.",
+        )
 
     # 1. IOC Extraction
     extracted_iocs = IOCEngine.extract_iocs(event_dict)
@@ -206,7 +237,7 @@ async def list_attacks(
     risk_level: Optional[str] = None
 ):
     """List all attack sessions with risk levels and behavior signatures."""
-    query = {}
+    query = _real_session_query()
     if status:
         query["status"] = status.upper()
     if risk_level:
@@ -439,12 +470,13 @@ async def get_dashboard_summary():
     iocs_col = get_iocs_col()
     mitre_col = get_mitre_col()
 
-    total_sessions = await sessions_col.count_documents({})
-    active_sessions = await sessions_col.count_documents({"status": "ACTIVE"})
-    contained_sessions = await sessions_col.count_documents({"status": "CONTAINED"})
-    critical_risk_sessions = await sessions_col.count_documents({"risk_level": "CRITICAL"})
-    high_risk_sessions = await sessions_col.count_documents({"risk_level": "HIGH"})
-    total_events = await events_col.count_documents({})
+    real_q = _real_session_query()
+    total_sessions = await sessions_col.count_documents(real_q)
+    active_sessions = await sessions_col.count_documents({**real_q, "status": "ACTIVE"})
+    contained_sessions = await sessions_col.count_documents({**real_q, "status": "CONTAINED"})
+    critical_risk_sessions = await sessions_col.count_documents({**real_q, "risk_level": "CRITICAL"})
+    high_risk_sessions = await sessions_col.count_documents({**real_q, "risk_level": "HIGH"})
+    total_events = await events_col.count_documents({"session_id": real_q["session_id"]})
     total_iocs = await iocs_col.count_documents({})
 
     # Top MITRE techniques aggregation
@@ -460,11 +492,12 @@ async def get_dashboard_summary():
     ]
 
     # Recent attacks
-    recent_cur = sessions_col.find({}, {"_id": 0}).sort("last_seen", -1).limit(6)
+    recent_cur = sessions_col.find(real_q, {"_id": 0}).sort("last_seen", -1).limit(6)
     recent_attacks = await recent_cur.to_list(6)
 
-    # Service distribution
+    # Service distribution (real sessions only)
     srv_pipeline = [
+        {"$match": real_q},
         {"$group": {"_id": "$service", "count": {"$sum": 1}}}
     ]
     srv_raw = await sessions_col.aggregate(srv_pipeline).to_list(10)
@@ -482,3 +515,43 @@ async def get_dashboard_summary():
         recent_attacks=recent_attacks,
         service_distribution=service_distribution
     )
+
+
+# -------------------------------------------------------------------------
+# 9. ADMIN — Purge demo/simulation data (one-time cleanup before hackathon)
+# -------------------------------------------------------------------------
+@router.post("/admin/purge-demo")
+async def purge_demo_data(key: str = Query(..., description="ADMIN_PURGE_KEY")):
+    """
+    Removes all simulation/test sessions from MongoDB.
+    Real honeypot attacker sessions are preserved.
+    """
+    if key != settings.ADMIN_PURGE_KEY:
+        raise HTTPException(status_code=403, detail="Invalid purge key")
+
+    demo_filter = {
+        "$or": [
+            {"session_id": {"$regex": r"^(ATK-SIM-|ATK-SSH-901|ATK-WEB-402|sim-|SYSTEM-)"}},
+            {"metadata.simulation": True},
+        ]
+    }
+    sessions_col = get_sessions_col()
+    events_col = get_events_col()
+
+    demo_sessions = await sessions_col.find(demo_filter, {"session_id": 1}).to_list(5000)
+    session_ids = [s["session_id"] for s in demo_sessions if s.get("session_id")]
+
+    ev_result = await events_col.delete_many(demo_filter)
+    sess_result = await sessions_col.delete_many(demo_filter)
+
+    if session_ids:
+        await get_iocs_col().update_many({}, {"$pull": {"session_ids": {"$in": session_ids}}})
+        await get_mitre_col().delete_many({"session_id": {"$in": session_ids}})
+        await get_reports_col().delete_many({"session_id": {"$in": session_ids}})
+
+    return {
+        "status": "purged",
+        "events_deleted": ev_result.deleted_count,
+        "sessions_deleted": sess_result.deleted_count,
+        "message": "Demo/simulation data removed. Dashboard now shows real honeypot traffic only.",
+    }

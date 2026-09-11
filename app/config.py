@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     # AI Engine Keys (Optional - fallback rule-based threat engine activates if missing)
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+
+    # Production: reject dashboard-injected fake simulation events (real honeypot only)
+    ALLOW_SIMULATION_EVENTS: bool = os.getenv("ALLOW_SIMULATION_EVENTS", "false").lower() in ("1", "true", "yes")
+    ADMIN_PURGE_KEY: str = os.getenv("ADMIN_PURGE_KEY", "kurukshetra-purge-demo")
     
     # CORS Origins (Allow frontend Dashboard & Member 4)
     CORS_ORIGINS: list[str] = [

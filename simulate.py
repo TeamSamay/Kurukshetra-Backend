@@ -9,7 +9,8 @@ import requests
 import uuid
 from datetime import datetime, timezone
 
-BASE_URL = "http://127.0.0.1:8000/api/events"
+import os
+BASE_URL = os.getenv("BACKEND_URL", "https://kurukshetra-backend.onrender.com").rstrip("/") + "/api/events"
 
 ATTACK_SCENARIOS = [
     {
