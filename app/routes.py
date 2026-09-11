@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -510,40 +511,49 @@ async def get_dashboard_summary():
     mitre_col = get_mitre_col()
 
     real_q = _real_session_query()
-    total_sessions = await sessions_col.count_documents(real_q)
-    active_sessions = await sessions_col.count_documents({**real_q, "status": "ACTIVE"})
-    contained_sessions = await sessions_col.count_documents({**real_q, "status": "CONTAINED"})
-    critical_risk_sessions = await sessions_col.count_documents({**real_q, "risk_level": "CRITICAL"})
-    high_risk_sessions = await sessions_col.count_documents({**real_q, "risk_level": "HIGH"})
-    total_events = await events_col.count_documents({"session_id": real_q["session_id"]})
-    total_iocs = await iocs_col.count_documents({})
-
-    # Top MITRE techniques aggregation
-    pipeline = [
+    mitre_pipeline = [
         {"$group": {"_id": "$technique_id", "name": {"$first": "$technique_name"}, "count": {"$sum": 1}}},
         {"$sort": {"count": -1}},
         {"$limit": 5}
     ]
-    top_mitre_raw = await mitre_col.aggregate(pipeline).to_list(5)
+    srv_pipeline = [
+        {"$match": real_q},
+        {"$group": {"_id": "$service", "count": {"$sum": 1}}}
+    ]
+
+    # Execute all 11 aggregation and count queries concurrently
+    (
+        total_sessions,
+        active_sessions,
+        contained_sessions,
+        critical_risk_sessions,
+        high_risk_sessions,
+        total_events,
+        total_iocs,
+        top_mitre_raw,
+        recent_attacks,
+        srv_raw,
+        bc_summary
+    ) = await asyncio.gather(
+        sessions_col.count_documents(real_q),
+        sessions_col.count_documents({**real_q, "status": "ACTIVE"}),
+        sessions_col.count_documents({**real_q, "status": "CONTAINED"}),
+        sessions_col.count_documents({**real_q, "risk_level": "CRITICAL"}),
+        sessions_col.count_documents({**real_q, "risk_level": "HIGH"}),
+        events_col.count_documents({"session_id": real_q["session_id"]}),
+        iocs_col.count_documents({}),
+        mitre_col.aggregate(mitre_pipeline).to_list(5),
+        sessions_col.find(real_q, {"_id": 0}).sort("last_seen", -1).limit(6).to_list(6),
+        sessions_col.aggregate(srv_pipeline).to_list(10),
+        BlockchainEvidenceLedger.verify_chain()
+    )
+
     top_mitre = [
         {"technique_id": item["_id"], "name": item["name"], "count": item["count"]}
         for item in top_mitre_raw
     ]
 
-    # Recent attacks
-    recent_cur = sessions_col.find(real_q, {"_id": 0}).sort("last_seen", -1).limit(6)
-    recent_attacks = await recent_cur.to_list(6)
-
-    # Service distribution (real sessions only)
-    srv_pipeline = [
-        {"$match": real_q},
-        {"$group": {"_id": "$service", "count": {"$sum": 1}}}
-    ]
-    srv_raw = await sessions_col.aggregate(srv_pipeline).to_list(10)
-    service_distribution = {item["_id"]: item["count"] for item in srv_raw if item["_id"]}
-
-    # Blockchain evidence summary
-    bc_summary = await BlockchainEvidenceLedger.verify_chain()
+    service_distribution = {item["_id"]: item["count"] for item in srv_raw if item.get("_id")}
 
     return DashboardSummaryResponse(
         total_sessions=total_sessions,

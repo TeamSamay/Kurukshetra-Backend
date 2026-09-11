@@ -188,12 +188,26 @@ class BlockchainEvidenceLedger:
             "timestamp": evidence.get("timestamp")
         }
 
+    _cached_verification: Optional[Dict[str, Any]] = None
+    _cache_time: float = 0.0
+
     @classmethod
-    async def verify_chain(cls) -> Dict[str, Any]:
+    def invalidate_cache(cls):
+        cls._cached_verification = None
+        cls._cache_time = 0.0
+
+    @classmethod
+    async def verify_chain(cls, force_refresh: bool = False) -> Dict[str, Any]:
         """
         Validates the entire blockchain from Block #1 to the latest block.
         Checks previous_hash linkage and database telemetry consistency.
+        Uses batch MongoDB queries and TTL caching for sub-millisecond response.
         """
+        import time
+        now_ts = time.time()
+        if not force_refresh and cls._cached_verification is not None and (now_ts - cls._cache_time < 15.0):
+            return cls._cached_verification
+
         blockchain_col = get_blockchain_col()
         events_col = get_events_col()
 
@@ -201,7 +215,7 @@ class BlockchainEvidenceLedger:
 
         total_blocks = len(blocks)
         if total_blocks == 0:
-            return {
+            res = {
                 "chain_status": "VALID",
                 "total_evidence_blocks": 0,
                 "verified_evidence": 0,
@@ -210,6 +224,14 @@ class BlockchainEvidenceLedger:
                 "latest_evidence": "NONE",
                 "alerts": []
             }
+            cls._cached_verification = res
+            cls._cache_time = now_ts
+            return res
+
+        # Batch load all related events in one single query
+        event_ids = [b.get("event_id") for b in blocks if b.get("event_id")]
+        event_docs = await events_col.find({"event_id": {"$in": event_ids}}).to_list(len(event_ids))
+        events_by_id = {e["event_id"]: e for e in event_docs if "event_id" in e}
 
         expected_prev_hash = settings.BLOCKCHAIN_GENESIS_HASH
         verified_count = 0
@@ -252,8 +274,8 @@ class BlockchainEvidenceLedger:
                     "evidence_id": ev_id
                 })
 
-            # 3. Check DB Event match
-            ev_doc = await events_col.find_one({"event_id": ev_id_ref})
+            # 3. Check DB Event match using in-memory batch map
+            ev_doc = events_by_id.get(ev_id_ref)
             if ev_doc:
                 curr_db_hash = calculate_event_hash(ev_doc)
                 if curr_db_hash != stored_event_h:
@@ -278,19 +300,18 @@ class BlockchainEvidenceLedger:
 
             expected_prev_hash = b_hash
 
-        chain_status = "VALID" if integrity_alerts == 0 else "INTEGRITY_COMPROMISED"
-        latest_block = blocks[-1] if blocks else {}
-
-        return {
-            "chain_status": chain_status,
+        result = {
+            "chain_status": "VALID" if integrity_alerts == 0 else "TAMPER_DETECTED",
             "total_evidence_blocks": total_blocks,
             "verified_evidence": verified_count,
             "integrity_alerts": integrity_alerts,
-            "latest_block": latest_block.get("block_index", 0),
-            "latest_evidence": latest_block.get("evidence_id", "NONE"),
-            "latest_block_hash": latest_block.get("block_hash", ""),
+            "latest_block": blocks[-1].get("block_index") if blocks else 0,
+            "latest_evidence": blocks[-1].get("evidence_id") if blocks else "NONE",
             "alerts": alerts
         }
+        cls._cached_verification = result
+        cls._cache_time = now_ts
+        return result
 
     # -------------------------------------------------------------------------
     # SAFE DEMO TAMPERING & RESTORATION (Controlled Sandbox Demonstration)
@@ -329,6 +350,7 @@ class BlockchainEvidenceLedger:
         Controlled demonstration only:
         Silently alters the database payload of the test record while blockchain evidence remains unchanged.
         """
+        cls.invalidate_cache()
         await cls.ensure_demo_record()
         events_col = get_events_col()
 
@@ -351,6 +373,7 @@ class BlockchainEvidenceLedger:
     @classmethod
     async def restore_demo_record(cls) -> Dict[str, Any]:
         """Restores the demo record back to its original state."""
+        cls.invalidate_cache()
         await cls.ensure_demo_record()
         events_col = get_events_col()
 
