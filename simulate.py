@@ -77,7 +77,7 @@ def run_simulation(delay: float = 1.0):
             }
 
             try:
-                res = requests.post(BASE_URL, json=payload, timeout=5)
+                res = requests.post(BASE_URL, json=payload, timeout=15)
                 if res.status_code == 200:
                     data = res.json()
                     print(f"  [{idx}/{len(scenario['events'])}] Sent: '{item['event'][:45]}...' -> Risk: {data['current_session_risk']} ({data['risk_level']}) | DNA: {data.get('fingerprint')}")

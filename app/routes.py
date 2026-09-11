@@ -181,7 +181,9 @@ async def ingest_event(payload: EventCreate):
             "session": session_doc,
             "extracted_iocs": extracted_iocs,
             "mitre_matches": mitre_matches
-        }
+        },
+        "event": event_dict,
+        "session": session_doc
     }
     await ws_manager.broadcast(ws_payload)
 
@@ -285,11 +287,18 @@ async def list_attackers(limit: int = Query(50, ge=1, le=200)):
 
 
 # -------------------------------------------------------------------------
-# 5. MITRE ATT&CK ENDPOINT
+# 5. MITRE ATT&CK ENDPOINTS
 # -------------------------------------------------------------------------
+@router.get("/mitre", response_model=List[MitreTechniqueResponse])
+async def list_all_mitre(limit: int = Query(100, ge=1, le=500)):
+    """Get all observed MITRE ATT&CK techniques across all sessions."""
+    cursor = get_mitre_col().find({}, {"_id": 0}).sort("timestamp", -1).limit(limit)
+    return await cursor.to_list(length=limit)
+
+
 @router.get("/mitre/{session_id}", response_model=List[MitreTechniqueResponse])
 async def get_session_mitre(session_id: str):
-    """Get MITRE ATT&CK techniques identified for a session."""
+    """Get MITRE ATT&CK techniques identified for a specific session."""
     cursor = get_mitre_col().find({"session_id": session_id}, {"_id": 0})
     return await cursor.to_list(length=100)
 
@@ -329,6 +338,7 @@ async def contain_session(session_id: str, req: ContainmentRequest = Containment
     # Broadcast containment alert via WebSocket
     await ws_manager.broadcast({
         "type": "SESSION_CONTAINED",
+        "session_id": session_id,
         "data": {
             "session_id": session_id,
             "containment_info": containment_info

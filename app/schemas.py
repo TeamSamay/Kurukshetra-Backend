@@ -112,9 +112,9 @@ class MitreTechniqueResponse(BaseModel):
     technique_id: str
     technique_name: str
     tactic: str
-    matched_command: str
-    evidence: str
-    timestamp: str
+    matched_command: Optional[str] = ""
+    evidence: Optional[str] = ""
+    timestamp: Optional[str] = None
 
 
 # -------------------------------------------------------------------------
