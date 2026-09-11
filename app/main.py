@@ -22,17 +22,7 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing Threat Intelligence Backend...")
     await connect_to_mongo()
     
-    # Check if DB has baseline sessions
-    try:
-        from app.database import get_sessions_col
-        sessions_col = get_sessions_col()
-        count = await sessions_col.count_documents({})
-        if count == 0:
-            logger.info("Database is empty. Seeding baseline telemetry events & threat intelligence...")
-            from seed_database import seed
-            await seed()
-    except Exception as e:
-        logger.warning(f"Auto-seed check skipped or failed: {e}")
+    # Production Mode: Real honeypot telemetry only, no automated mock seeding
 
     yield
     # Shutdown: close connections
