@@ -47,12 +47,11 @@ def _is_simulation_event(event_dict: dict) -> bool:
 
 
 def _real_session_query(extra: dict | None = None) -> dict:
-    """MongoDB filter: exclude demo/simulation sessions from production dashboard."""
-    q = {
-        "session_id": {
-            "$not": {"$regex": r"^(ATK-SIM-|ATK-SSH-901|ATK-WEB-402|sim-|SYSTEM-)"}
-        }
-    }
+    """MongoDB filter: exclude only internal/system noise, plus demo sessions when simulation is disabled."""
+    excluded = r"^(SYSTEM-|HEALTH-)"
+    if not settings.ALLOW_SIMULATION_EVENTS:
+        excluded = r"^(ATK-SIM-|ATK-SSH-901|ATK-WEB-402|sim-|SYSTEM-|HEALTH-)"
+    q = {"session_id": {"$not": {"$regex": excluded}}}
     if extra:
         q.update(extra)
     return q
@@ -518,7 +517,69 @@ async def get_dashboard_summary():
 
 
 # -------------------------------------------------------------------------
-# 9. ADMIN — Purge demo/simulation data (one-time cleanup before hackathon)
+# 9. AI / LIVE THREAT LANDSCAPE ANALYSIS
+# -------------------------------------------------------------------------
+@router.get("/ai/threat-analysis")
+async def ai_threat_analysis(limit: int = Query(40, ge=1, le=200)):
+    """
+    Runs the AI threat engine against the latest real telemetry and returns
+    a live threat-landscape analysis (Gemini if key configured, else heuristic).
+    Powers the frontend "AI Advisory" tab.
+    """
+    events_col = get_events_col()
+    real_q = _real_session_query()
+    recent = await events_col.find(real_q, {"_id": 0}).sort("timestamp", -1).limit(limit).to_list(limit)
+    if not recent:
+        return {
+            "ai_powered": bool(settings.GEMINI_API_KEY),
+            "model_used": "Gemini 2.5 Flash" if settings.GEMINI_API_KEY else "Kurukshetra Heuristic Cyber Engine",
+            "executive_summary": "No adversarial telemetry captured yet. Deception sensors are armed and listening.",
+            "threat_level": "LOW",
+            "threat_score": 0,
+            "attack_vectors": [],
+            "mitre_techniques": [],
+            "recommendations": [],
+            "analyzed_at": now_iso(),
+        }
+
+    # Group recent events into a pseudo-session context for the AI engine
+    top = recent[0]
+    sessions_col = get_sessions_col()
+    session = await sessions_col.find_one({"session_id": top.get("session_id"), "_id": 0})
+    session = session or {
+        "session_id": top.get("session_id"),
+        "source_ip": top.get("source_ip"),
+        "target_ip": top.get("target_ip"),
+        "service": top.get("service"),
+        "risk_breakdown": [],
+    }
+
+    analysis = await AIEngine.analyze_threat(
+        session=session,
+        events=recent,
+        risk_score=session.get("risk_score", 0),
+        risk_level=session.get("risk_level", "LOW"),
+        iocs=[],
+        mitre_mappings=[],
+        fingerprint=session.get("fingerprint", "UNKNOWN"),
+    )
+    return {
+        "ai_powered": bool(settings.GEMINI_API_KEY),
+        "model_used": "Gemini 2.5 Flash" if settings.GEMINI_API_KEY else "Kurukshetra Heuristic Cyber Engine",
+        "executive_summary": analysis["summary"],
+        "likely_objective": analysis["likely_objective"],
+        "risk_explanation": analysis["risk_explanation"],
+        "observed_behavior": analysis["observed_behavior_explanation"],
+        "recommendations": [analysis["recommended_defensive_action"]],
+        "threat_level": session.get("risk_level", "LOW"),
+        "threat_score": session.get("risk_score", 0),
+        "attack_vectors": [svc.strip().upper() + " decoy engagement" for svc in (session.get("service") or "unknown").split(",")],
+        "analyzed_at": now_iso(),
+    }
+
+
+# -------------------------------------------------------------------------
+# 10. ADMIN — Purge demo/simulation data (one-time cleanup before hackathon)
 # -------------------------------------------------------------------------
 @router.post("/admin/purge-demo")
 async def purge_demo_data(key: str = Query(..., description="ADMIN_PURGE_KEY")):
