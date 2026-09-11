@@ -137,11 +137,20 @@ class ContainmentResponse(BaseModel):
 # Threat Report Schemas
 # -------------------------------------------------------------------------
 class AIAnalysis(BaseModel):
-    summary: str
-    likely_objective: str
-    risk_explanation: str
-    observed_behavior_explanation: str
-    recommended_defensive_action: str
+    threat_summary: Optional[str] = None
+    summary: Optional[str] = None
+    observed_behavior: Optional[List[str]] = None
+    ai_interpretation: Optional[List[str]] = None
+    likely_objective: Optional[str] = None
+    risk_explanation: Optional[str] = None
+    observed_behavior_explanation: Optional[str] = None
+    important_findings: Optional[List[str]] = None
+    recommended_actions: Optional[List[str]] = None
+    recommended_defensive_action: Optional[str] = None
+    confidence: Optional[int] = 90
+    evidence_used: Optional[List[str]] = None
+    ai_powered: Optional[bool] = False
+    model_used: Optional[str] = None
 
 
 class ThreatReportResponse(BaseModel):
@@ -159,6 +168,86 @@ class ThreatReportResponse(BaseModel):
     attacker_fingerprint: Optional[str]
     ai_analysis: Optional[AIAnalysis]
     containment_status: Dict[str, Any]
+    evidence_integrity: Optional[str] = "VERIFIED"
+    blockchain_proof: Optional[Dict[str, Any]] = None
+
+
+# -------------------------------------------------------------------------
+# Blockchain Evidence Ledger Schemas
+# -------------------------------------------------------------------------
+class BlockchainEvidenceBlock(BaseModel):
+    evidence_id: str
+    event_id: str
+    session_id: str
+    block_index: int
+    event_hash: str
+    previous_hash: str
+    block_hash: str
+    timestamp: str
+    verification_status: str = "VERIFIED"
+
+
+class BlockchainVerifyResponse(BaseModel):
+    status: str
+    evidence_id: str
+    event_id: Optional[str] = None
+    session_id: Optional[str] = None
+    block_index: Optional[int] = None
+    database_hash: Optional[str] = None
+    blockchain_hash: Optional[str] = None
+    previous_hash: Optional[str] = None
+    block_hash: Optional[str] = None
+    hash_match: Optional[bool] = None
+    block_hash_valid: Optional[bool] = None
+    message: str
+    timestamp: Optional[str] = None
+
+
+class BlockchainSummaryResponse(BaseModel):
+    chain_status: str
+    total_evidence_blocks: int
+    verified_evidence: int
+    integrity_alerts: int
+    latest_block: int
+    latest_evidence: str
+    latest_block_hash: Optional[str] = ""
+    alerts: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class TamperDemoResponse(BaseModel):
+    message: str
+    demo_event_id: str
+    altered_payload: Optional[str] = None
+    restored_payload: Optional[str] = None
+    verification_result: Dict[str, Any]
+
+
+# -------------------------------------------------------------------------
+# AI Explanation & Vulnerability Guard Schemas
+# -------------------------------------------------------------------------
+class EventExplainRequest(BaseModel):
+    event_id: Optional[str] = None
+    event: str
+    event_type: Optional[str] = "command"
+    service: Optional[str] = "ssh"
+    source_ip: Optional[str] = "unknown"
+
+
+class EventExplainResponse(BaseModel):
+    observed_behavior: str
+    ai_interpretation: str
+    threat_context: str
+    defensive_note: str
+    ai_powered: bool = False
+
+
+class VulnerabilityGuardItem(BaseModel):
+    target_interest: str
+    observed_pattern: str
+    potential_exposure: str
+    risk_severity: str
+    defensive_recommendation: str
+    remediation_guide: str
 
 
 # -------------------------------------------------------------------------
@@ -175,3 +264,4 @@ class DashboardSummaryResponse(BaseModel):
     top_mitre_techniques: List[Dict[str, Any]]
     recent_attacks: List[SessionResponse]
     service_distribution: Dict[str, int]
+    blockchain_summary: Optional[BlockchainSummaryResponse] = None

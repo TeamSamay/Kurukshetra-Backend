@@ -11,9 +11,14 @@ class Settings(BaseSettings):
     MONGODB_URI: str = os.getenv("MONGODB_URI", "mongodb://127.0.0.1:27017")
     MONGODB_DB_NAME: str = os.getenv("MONGODB_DB_NAME", "threat_intelligence")
     
-    # AI Engine Keys (Optional - fallback rule-based threat engine activates if missing)
+    # AI Engine Keys & Models (Groq + Llama preferred, with heuristic fallback)
+    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+
+    # Blockchain Evidence Ledger Configuration
+    BLOCKCHAIN_GENESIS_HASH: str = "0" * 64
 
     # Demo mode: allow dashboard-injected simulation events for hackathon demos.
     # Set ALLOW_SIMULATION_EVENTS=false in production to reject fake telemetry.

@@ -61,6 +61,9 @@ def get_reports_col():
 def get_honeypots_col():
     return get_db()["honeypots"]
 
+def get_blockchain_col():
+    return get_db()["blockchain_evidence"]
+
 async def init_db_indexes():
     """Ensure indexes exist for high-speed queries and data integrity."""
     try:
@@ -92,6 +95,13 @@ async def init_db_indexes():
         
         # reports indexes
         await get_reports_col().create_index("session_id", unique=True)
+        
+        # blockchain_evidence indexes
+        await get_blockchain_col().create_index("evidence_id", unique=True)
+        await get_blockchain_col().create_index("event_id", unique=True)
+        await get_blockchain_col().create_index("session_id")
+        await get_blockchain_col().create_index("block_index", unique=True)
+        await get_blockchain_col().create_index("block_hash")
         
         logger.info("MongoDB indexes verified successfully.")
     except Exception as e:
