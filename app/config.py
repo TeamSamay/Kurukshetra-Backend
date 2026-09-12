@@ -22,7 +22,7 @@ class Settings(BaseSettings):
 
     # Demo mode: allow dashboard-injected simulation events for hackathon demos.
     # Set ALLOW_SIMULATION_EVENTS=false in production to reject fake telemetry.
-    ALLOW_SIMULATION_EVENTS: bool = os.getenv("ALLOW_SIMULATION_EVENTS", "true").lower() in ("1", "true", "yes")
+    ALLOW_SIMULATION_EVENTS: bool = os.getenv("ALLOW_SIMULATION_EVENTS", "false").lower() in ("1", "true", "yes")
     ADMIN_PURGE_KEY: str = os.getenv("ADMIN_PURGE_KEY", "kurukshetra-purge-demo")
     
     # CORS Origins (Allow frontend Dashboard & Member 4)

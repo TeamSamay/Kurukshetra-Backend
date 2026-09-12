@@ -41,7 +41,10 @@ from app.websocket import ws_manager
 router = APIRouter()
 
 # Sessions/events that are NOT real honeypot attacker traffic
-_DEMO_SESSION_PREFIXES = ("ATK-SIM-", "ATK-SSH-901", "ATK-WEB-402", "sim-")
+_DEMO_SESSION_PREFIXES = (
+    "ATK-SIM-", "ATK-SSH-901", "ATK-WEB-402", "ATK-REDIS-601",
+    "ATK-K8S-505", "ATK-RDP-108", "ATK-TELNET-301", "sim-"
+)
 
 
 def now_iso() -> str:
@@ -60,7 +63,7 @@ def _real_session_query(extra: dict | None = None) -> dict:
     """MongoDB filter: exclude only internal/system noise, plus demo sessions when simulation is disabled."""
     excluded = r"^(SYSTEM-|HEALTH-)"
     if not settings.ALLOW_SIMULATION_EVENTS:
-        excluded = r"^(ATK-SIM-|ATK-SSH-901|ATK-WEB-402|sim-|SYSTEM-|HEALTH-)"
+        excluded = r"^(ATK-SIM-|ATK-SSH-901|ATK-WEB-402|ATK-REDIS-601|ATK-K8S-505|ATK-RDP-108|ATK-TELNET-301|sim-|SYSTEM-|HEALTH-)"
     q = {"session_id": {"$not": {"$regex": excluded}}}
     if extra:
         q.update(extra)
